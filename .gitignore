@@ -1,0 +1,33 @@
+# Secrets
+.env
+token.json
+credentials.json
+google_auth_credentials.json
+migrate_to_cloud.py
+
+# App data
+documents.json
+auditor.json
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# Qdrant local data
+data/
+
+# macOS
+.DS_Store
+
+# IDEs
+.vscode/
+.idea/
