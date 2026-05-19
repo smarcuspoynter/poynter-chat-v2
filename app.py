@@ -10,7 +10,8 @@ from datetime import date
 import streamlit as st
 import anthropic
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from curl_cffi import requests
+import requests
+from curl_cffi import requests as cffi_requests
 from dotenv import load_dotenv
 from qdrant_client import QdrantClient
 from sentence_transformers import SentenceTransformer
@@ -188,7 +189,8 @@ def fetch_all_courses_cached():
             }
             for c in all_raw
         ]
-    except Exception:
+    except Exception as e:
+        st.session_state["ld_fetch_error"] = str(e)
         return []
 
 
@@ -280,7 +282,7 @@ def load_search_models():
 
 def ld_get(path, params=None):
     url = f"{LD_BASE_URL}/wp-json/ldlms/v2/{path}"
-    resp = requests.get(url, auth=LD_AUTH, params=params or {}, timeout=15, impersonate="chrome")
+    resp = requests.get(url, auth=LD_AUTH, params=params or {}, timeout=15)
     resp.raise_for_status()
     return resp.json(), resp.headers
 
@@ -1665,7 +1667,8 @@ def render_auditor():
     if page == "Course List":
         courses = fetch_all_courses_cached()
         if not courses:
-            st.error("Could not load courses from LearnDash.")
+            err = st.session_state.get("ld_fetch_error", "Unknown error")
+            st.error(f"Could not load courses from LearnDash: {err}")
             return
 
         s1, s2 = st.columns([3, 1.5])
