@@ -15,7 +15,7 @@ import requests
 from curl_cffi import requests as cffi_requests
 from dotenv import load_dotenv
 from qdrant_client import QdrantClient
-from qdrant_client.models import Distance, VectorParams, PointStruct, Filter, FieldCondition, MatchValue, PointIdsList
+from qdrant_client.models import Distance, VectorParams, PointStruct, Filter, FieldCondition, MatchValue, PointIdsList, PayloadSchemaType
 from sentence_transformers import SentenceTransformer
 
 try:
@@ -142,76 +142,90 @@ def load_documents():
     user_email = st.session_state.get("user_email", "")
     if not user_email:
         return []
-    _ensure_collections()
-    client = get_qdrant()
-    points, _ = client.scroll(
-        DOCS_COLLECTION,
-        scroll_filter=Filter(must=[FieldCondition(key="user_email", match=MatchValue(value=user_email))]),
-        limit=1000,
-        with_payload=True,
-    )
-    return [p.payload for p in points]
+    try:
+        _ensure_collections()
+        client = get_qdrant()
+        points, _ = client.scroll(
+            DOCS_COLLECTION,
+            scroll_filter=Filter(must=[FieldCondition(key="user_email", match=MatchValue(value=user_email))]),
+            limit=1000,
+            with_payload=True,
+        )
+        return [p.payload for p in points]
+    except Exception as e:
+        st.session_state["_storage_error"] = f"Could not load documents: {e}"
+        return []
 
 
 def persist_documents():
     user_email = st.session_state.get("user_email", "")
     if not user_email:
         return
-    _ensure_collections()
-    client = get_qdrant()
-    current_docs = st.session_state.documents
-    for doc in current_docs:
-        if "id" not in doc:
-            doc["id"] = str(uuid.uuid4())
-    current_ids = {doc["id"] for doc in current_docs}
-    existing_points, _ = client.scroll(
-        DOCS_COLLECTION,
-        scroll_filter=Filter(must=[FieldCondition(key="user_email", match=MatchValue(value=user_email))]),
-        limit=1000,
-        with_payload=False,
-    )
-    existing_ids = {str(p.id) for p in existing_points}
-    if current_docs:
-        client.upsert(
+    try:
+        _ensure_collections()
+        client = get_qdrant()
+        current_docs = st.session_state.documents
+        for doc in current_docs:
+            if "id" not in doc:
+                doc["id"] = str(uuid.uuid4())
+        current_ids = {doc["id"] for doc in current_docs}
+        existing_points, _ = client.scroll(
             DOCS_COLLECTION,
-            points=[
-                PointStruct(
-                    id=doc["id"],
-                    vector=[0.0],
-                    payload={**doc, "user_email": user_email},
-                )
-                for doc in current_docs
-            ],
+            scroll_filter=Filter(must=[FieldCondition(key="user_email", match=MatchValue(value=user_email))]),
+            limit=1000,
+            with_payload=False,
         )
-    to_delete = existing_ids - current_ids
-    if to_delete:
-        client.delete(DOCS_COLLECTION, points_selector=PointIdsList(points=list(to_delete)))
+        existing_ids = {str(p.id) for p in existing_points}
+        if current_docs:
+            client.upsert(
+                DOCS_COLLECTION,
+                points=[
+                    PointStruct(
+                        id=doc["id"],
+                        vector=[0.0],
+                        payload={**doc, "user_email": user_email},
+                    )
+                    for doc in current_docs
+                ],
+            )
+        to_delete = existing_ids - current_ids
+        if to_delete:
+            client.delete(DOCS_COLLECTION, points_selector=PointIdsList(points=list(to_delete)))
+    except Exception as e:
+        st.toast(f"⚠️ Document save failed: {e}", icon="⚠️")
 
 
 def load_auditor_results() -> dict:
-    _ensure_collections()
-    client = get_qdrant()
-    points, _ = client.scroll(AUDIT_COLLECTION, limit=10000, with_payload=True)
-    return {str(p.payload["course_id"]): p.payload for p in points if "course_id" in p.payload}
+    try:
+        _ensure_collections()
+        client = get_qdrant()
+        points, _ = client.scroll(AUDIT_COLLECTION, limit=10000, with_payload=True)
+        return {str(p.payload["course_id"]): p.payload for p in points if "course_id" in p.payload}
+    except Exception as e:
+        st.session_state["_storage_error"] = f"Could not load audit results: {e}"
+        return {}
 
 
 def persist_auditor_results():
-    _ensure_collections()
-    client = get_qdrant()
-    current = st.session_state.auditor_results
-    if not current:
-        return
-    client.upsert(
-        AUDIT_COLLECTION,
-        points=[
-            PointStruct(
-                id=int(cid),
-                vector=[0.0],
-                payload=result,
-            )
-            for cid, result in current.items()
-        ],
-    )
+    try:
+        _ensure_collections()
+        client = get_qdrant()
+        current = st.session_state.auditor_results
+        if not current:
+            return
+        client.upsert(
+            AUDIT_COLLECTION,
+            points=[
+                PointStruct(
+                    id=int(cid),
+                    vector=[0.0],
+                    payload=result,
+                )
+                for cid, result in current.items()
+            ],
+        )
+    except Exception as e:
+        st.toast(f"⚠️ Audit save failed: {e}", icon="⚠️")
 
 
 @st.cache_data(ttl=3600)
@@ -337,12 +351,21 @@ def _ensure_collections():
         return
     client = get_qdrant()
     existing = {c.name for c in client.get_collections().collections}
-    for name in (DOCS_COLLECTION, AUDIT_COLLECTION):
-        if name not in existing:
-            client.create_collection(
-                name,
-                vectors_config=VectorParams(size=1, distance=Distance.COSINE),
-            )
+    if DOCS_COLLECTION not in existing:
+        client.create_collection(
+            DOCS_COLLECTION,
+            vectors_config=VectorParams(size=1, distance=Distance.COSINE),
+        )
+        client.create_payload_index(
+            DOCS_COLLECTION,
+            field_name="user_email",
+            field_schema=PayloadSchemaType.KEYWORD,
+        )
+    if AUDIT_COLLECTION not in existing:
+        client.create_collection(
+            AUDIT_COLLECTION,
+            vectors_config=VectorParams(size=1, distance=Distance.COSINE),
+        )
     st.session_state["_collections_ready"] = True
 
 
@@ -1401,6 +1424,9 @@ if "documents" not in st.session_state:
 
 if "auditor_results" not in st.session_state:
     st.session_state.auditor_results = load_auditor_results()
+
+if "_storage_error" in st.session_state:
+    st.warning(f"Storage error (reload to retry): {st.session_state.pop('_storage_error')}")
 
 
 def save_as_document(content: str):
