@@ -712,9 +712,11 @@ def _tool_search_drive_api(creds, query: str) -> str:
 
 
 def tool_search_drive(query: str) -> str:
+    if not DRIVE_AVAILABLE:
+        return "Google Drive search is unavailable: Google API libraries failed to import on this server."
     creds = get_drive_credentials()
     if not creds:
-        return "Google Drive search is not connected. Run: python authenticate_drive.py"
+        return "Google Drive search is not connected: no access token in session. Sign out and sign back in to enable Drive search."
     try:
         return _tool_search_drive_api(creds, query)
     except Exception as e:
