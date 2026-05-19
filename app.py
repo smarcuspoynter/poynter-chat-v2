@@ -76,8 +76,6 @@ def build_google_auth_url() -> str:
         "state": state,
         "code_challenge": challenge,
         "code_challenge_method": "S256",
-        "access_type": "offline",
-        "prompt": "consent",
     }
     return GOOGLE_AUTH_ENDPOINT + "?" + urllib.parse.urlencode(params)
 
