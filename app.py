@@ -356,11 +356,12 @@ def _ensure_collections():
             DOCS_COLLECTION,
             vectors_config=VectorParams(size=1, distance=Distance.COSINE),
         )
-        client.create_payload_index(
-            DOCS_COLLECTION,
-            field_name="user_email",
-            field_schema=PayloadSchemaType.KEYWORD,
-        )
+    # Always ensure index exists — idempotent, handles collections created before this was added
+    client.create_payload_index(
+        DOCS_COLLECTION,
+        field_name="user_email",
+        field_schema=PayloadSchemaType.KEYWORD,
+    )
     if AUDIT_COLLECTION not in existing:
         client.create_collection(
             AUDIT_COLLECTION,
