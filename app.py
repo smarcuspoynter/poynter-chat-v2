@@ -4,6 +4,7 @@ import os
 import re
 import json
 import secrets
+import uuid
 import urllib.parse
 import urllib.request
 from datetime import date
@@ -14,6 +15,7 @@ import requests
 from curl_cffi import requests as cffi_requests
 from dotenv import load_dotenv
 from qdrant_client import QdrantClient
+from qdrant_client.models import Distance, VectorParams, PointStruct, Filter, FieldCondition, MatchValue, PointIdsList
 from sentence_transformers import SentenceTransformer
 
 try:
@@ -137,27 +139,79 @@ def build_drive_type_filter(drive_types):
 
 
 def load_documents():
-    if os.path.exists(DOCS_FILE):
-        with open(DOCS_FILE) as f:
-            return json.load(f)
-    return []
+    user_email = st.session_state.get("user_email", "")
+    if not user_email:
+        return []
+    _ensure_collections()
+    client = get_qdrant()
+    points, _ = client.scroll(
+        DOCS_COLLECTION,
+        scroll_filter=Filter(must=[FieldCondition(key="user_email", match=MatchValue(value=user_email))]),
+        limit=1000,
+        with_payload=True,
+    )
+    return [p.payload for p in points]
 
 
 def persist_documents():
-    with open(DOCS_FILE, "w") as f:
-        json.dump(st.session_state.documents, f, indent=2)
+    user_email = st.session_state.get("user_email", "")
+    if not user_email:
+        return
+    _ensure_collections()
+    client = get_qdrant()
+    current_docs = st.session_state.documents
+    for doc in current_docs:
+        if "id" not in doc:
+            doc["id"] = str(uuid.uuid4())
+    current_ids = {doc["id"] for doc in current_docs}
+    existing_points, _ = client.scroll(
+        DOCS_COLLECTION,
+        scroll_filter=Filter(must=[FieldCondition(key="user_email", match=MatchValue(value=user_email))]),
+        limit=1000,
+        with_payload=False,
+    )
+    existing_ids = {str(p.id) for p in existing_points}
+    if current_docs:
+        client.upsert(
+            DOCS_COLLECTION,
+            points=[
+                PointStruct(
+                    id=doc["id"],
+                    vector=[0.0],
+                    payload={**doc, "user_email": user_email},
+                )
+                for doc in current_docs
+            ],
+        )
+    to_delete = existing_ids - current_ids
+    if to_delete:
+        client.delete(DOCS_COLLECTION, points_selector=PointIdsList(points=list(to_delete)))
 
 
 def load_auditor_results() -> dict:
-    if os.path.exists(AUDITOR_FILE):
-        with open(AUDITOR_FILE) as f:
-            return json.load(f)
-    return {}
+    _ensure_collections()
+    client = get_qdrant()
+    points, _ = client.scroll(AUDIT_COLLECTION, limit=10000, with_payload=True)
+    return {str(p.payload["course_id"]): p.payload for p in points if "course_id" in p.payload}
 
 
 def persist_auditor_results():
-    with open(AUDITOR_FILE, "w") as f:
-        json.dump(st.session_state.auditor_results, f, indent=2)
+    _ensure_collections()
+    client = get_qdrant()
+    current = st.session_state.auditor_results
+    if not current:
+        return
+    client.upsert(
+        AUDIT_COLLECTION,
+        points=[
+            PointStruct(
+                id=int(cid),
+                vector=[0.0],
+                payload=result,
+            )
+            for cid, result in current.items()
+        ],
+    )
 
 
 @st.cache_data(ttl=3600)
@@ -269,6 +323,27 @@ Never construct or guess a URL — only use URLs that appear verbatim in tool re
 QDRANT_URL = os.environ.get("QDRANT_URL", "")
 QDRANT_API_KEY = os.environ.get("QDRANT_API_KEY", "")
 QDRANT_COLLECTION = "poynter_teaching"
+DOCS_COLLECTION = "user_documents"
+AUDIT_COLLECTION = "audit_results"
+
+
+@st.cache_resource
+def get_qdrant():
+    return QdrantClient(url=QDRANT_URL, api_key=QDRANT_API_KEY)
+
+
+def _ensure_collections():
+    if st.session_state.get("_collections_ready"):
+        return
+    client = get_qdrant()
+    existing = {c.name for c in client.get_collections().collections}
+    for name in (DOCS_COLLECTION, AUDIT_COLLECTION):
+        if name not in existing:
+            client.create_collection(
+                name,
+                vectors_config=VectorParams(size=1, distance=Distance.COSINE),
+            )
+    st.session_state["_collections_ready"] = True
 
 
 @st.cache_resource
@@ -1301,6 +1376,7 @@ if not _auth_email.endswith("@poynter.org"):
     st.stop()
 
 _user_email = _auth_email
+st.session_state["user_email"] = _user_email
 
 # --- Session state ---
 for key, default in [
@@ -1329,7 +1405,8 @@ if "auditor_results" not in st.session_state:
 
 def save_as_document(content: str):
     n = len(st.session_state.documents) + 1
-    st.session_state.documents.append({"name": f"Document {n}", "content": content})
+    doc = {"id": str(uuid.uuid4()), "name": f"Document {n}", "content": content}
+    st.session_state.documents.append(doc)
     st.session_state.active_doc = len(st.session_state.documents) - 1
     persist_documents()
 
