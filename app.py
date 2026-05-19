@@ -1,3 +1,5 @@
+import base64
+import hashlib
 import os
 import re
 import json
@@ -50,25 +52,41 @@ GOOGLE_TOKEN_ENDPOINT = "https://oauth2.googleapis.com/token"
 GOOGLE_USERINFO_ENDPOINT = "https://www.googleapis.com/oauth2/v2/userinfo"
 
 
-def build_google_auth_url(state: str) -> str:
+def _pkce_pair():
+    verifier = secrets.token_urlsafe(64)
+    challenge = base64.urlsafe_b64encode(
+        hashlib.sha256(verifier.encode()).digest()
+    ).rstrip(b"=").decode()
+    return verifier, challenge
+
+
+def build_google_auth_url() -> str:
+    verifier, challenge = _pkce_pair()
+    state = base64.urlsafe_b64encode(
+        json.dumps({"v": verifier, "n": secrets.token_hex(8)}).encode()
+    ).decode()
     params = {
         "client_id": GOOGLE_CLIENT_ID,
         "redirect_uri": REDIRECT_URI,
         "response_type": "code",
         "scope": "openid email profile",
         "state": state,
-        "prompt": "select_account",
+        "code_challenge": challenge,
+        "code_challenge_method": "S256",
     }
     return GOOGLE_AUTH_ENDPOINT + "?" + urllib.parse.urlencode(params)
 
 
-def fetch_google_user_email(code: str) -> str:
+def fetch_google_user_email(code: str, state: str) -> str:
+    state_data = json.loads(base64.urlsafe_b64decode(state + "==").decode())
+    verifier = state_data["v"]
     body = urllib.parse.urlencode({
         "code": code,
         "client_id": GOOGLE_CLIENT_ID,
         "client_secret": GOOGLE_CLIENT_SECRET,
         "redirect_uri": REDIRECT_URI,
         "grant_type": "authorization_code",
+        "code_verifier": verifier,
     }).encode()
     req = urllib.request.Request(GOOGLE_TOKEN_ENDPOINT, data=body, method="POST")
     try:
@@ -1242,13 +1260,15 @@ st.markdown(
 # --- Auth ---
 if "code" in st.query_params and "oauth_code" not in st.session_state:
     st.session_state["oauth_code"] = st.query_params["code"]
+    st.session_state["oauth_state"] = st.query_params.get("state", "")
     st.query_params.clear()
     st.rerun()
 
 if "oauth_code" in st.session_state:
     _code = st.session_state.pop("oauth_code")
+    _state = st.session_state.pop("oauth_state", "")
     try:
-        _email = fetch_google_user_email(_code)
+        _email = fetch_google_user_email(_code, _state)
         st.session_state["auth_email"] = _email
         st.rerun()
     except Exception as _e:
@@ -1262,7 +1282,7 @@ if not _auth_email:
         '<div style="max-width:400px;margin:100px auto;text-align:center">'
         '<p style="font-family:Roboto,sans-serif;font-size:15px;color:#555;margin-bottom:28px">'
         'Sign in with your Poynter Google account to continue.</p>'
-        f'<a href="{build_google_auth_url(secrets.token_hex(16))}" target="_self" '
+        f'<a href="{build_google_auth_url()}" target="_self" '
         'style="display:inline-block;background:#235213;color:#fff;font-family:Roboto,sans-serif;'
         'font-size:14px;font-weight:600;padding:12px 28px;border-radius:6px;text-decoration:none">'
         'Sign in with Google</a>'
