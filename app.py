@@ -72,15 +72,17 @@ def build_google_auth_url() -> str:
         "client_id": GOOGLE_CLIENT_ID,
         "redirect_uri": REDIRECT_URI,
         "response_type": "code",
-        "scope": "openid email profile",
+        "scope": "openid email profile https://www.googleapis.com/auth/drive.readonly",
         "state": state,
         "code_challenge": challenge,
         "code_challenge_method": "S256",
+        "access_type": "offline",
+        "prompt": "consent",
     }
     return GOOGLE_AUTH_ENDPOINT + "?" + urllib.parse.urlencode(params)
 
 
-def fetch_google_user_email(code: str, state: str) -> str:
+def fetch_google_user_info(code: str, state: str) -> dict:
     state_data = json.loads(base64.urlsafe_b64decode(state + "==").decode())
     verifier = state_data["v"]
     body = urllib.parse.urlencode({
@@ -103,7 +105,11 @@ def fetch_google_user_email(code: str, state: str) -> str:
     )
     with urllib.request.urlopen(req2) as r:
         user_info = json.loads(r.read())
-    return user_info.get("email", "")
+    return {
+        "email": user_info.get("email", ""),
+        "access_token": token.get("access_token", ""),
+        "refresh_token": token.get("refresh_token", ""),
+    }
 
 
 DRIVE_MIME_MAP = {
@@ -324,11 +330,16 @@ Respond in whatever format best fits the question. A broad question gets an over
 A specific content question gets a detailed breakdown. A review request gets structured feedback with specific quotes and suggestions.
 
 When finding content on a topic: call search_all — it automatically searches every enabled
-source (LMS and Drive) in parallel and returns results in labeled sections. Never call
-search_content or search_drive separately for topic searches.
+source (LMS and Drive) in parallel and returns results in labeled sections.
+
+For comprehensive questions (e.g. "show me everything on X", "evaluate consistency across content"):
+- Call search_all multiple times with different phrasings of the topic to maximize coverage
+- After identifying relevant lessons or topics from search results, call get_lesson or get_topic
+  to read the full text before drawing conclusions about quality or consistency
+- Do not summarize based only on titles and snippets for evaluation tasks
 
 For LMS navigation: use search_courses when looking for a specific course by name.
-Drill into results with get_course_structure, get_lesson, or get_topic as needed.
+Drill into results with get_course_structure, list_lessons, or list_topics as needed.
 
 Always include direct links to any course, lesson, topic, or Drive file you reference.
 Links are provided in the tool results. Format them as markdown links, e.g. [Title](https://...).
@@ -421,7 +432,7 @@ def tool_search_content(query: str) -> str:
             collection_name=QDRANT_COLLECTION,
             query=dense_vec,
             using="dense",
-            limit=5,
+            limit=20,
             with_payload=True,
         )
 
@@ -592,6 +603,18 @@ def tool_get_topic(topic_id: int) -> str:
 def get_drive_credentials():
     if not DRIVE_AVAILABLE:
         return None
+    # Use the token from the user's Google sign-in (works on Streamlit Cloud)
+    access_token = st.session_state.get("google_access_token")
+    if access_token:
+        return Credentials(
+            token=access_token,
+            refresh_token=st.session_state.get("google_refresh_token") or None,
+            token_uri=GOOGLE_TOKEN_ENDPOINT,
+            client_id=GOOGLE_CLIENT_ID,
+            client_secret=GOOGLE_CLIENT_SECRET,
+            scopes=["https://www.googleapis.com/auth/drive.readonly"],
+        )
+    # Fallback: local token.json (development only)
     if not os.path.exists(TOKEN_PATH):
         return None
     creds = Credentials.from_authorized_user_file(TOKEN_PATH, DRIVE_SCOPES)
@@ -1369,8 +1392,10 @@ if "oauth_code" in st.session_state:
     _code = st.session_state.pop("oauth_code")
     _state = st.session_state.pop("oauth_state", "")
     try:
-        _email = fetch_google_user_email(_code, _state)
-        st.session_state["auth_email"] = _email
+        _info = fetch_google_user_info(_code, _state)
+        st.session_state["auth_email"] = _info["email"]
+        st.session_state["google_access_token"] = _info["access_token"]
+        st.session_state["google_refresh_token"] = _info["refresh_token"]
         st.rerun()
     except Exception as _e:
         st.error(f"Sign-in failed: {_e}")
