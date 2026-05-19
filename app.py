@@ -282,7 +282,7 @@ def load_search_models():
 
 def ld_get(path, params=None):
     url = f"{LD_BASE_URL}/wp-json/ldlms/v2/{path}"
-    resp = requests.get(url, auth=LD_AUTH, params=params or {}, timeout=15)
+    resp = cffi_requests.get(url, auth=LD_AUTH, params=params or {}, timeout=15, impersonate="chrome")
     resp.raise_for_status()
     return resp.json(), resp.headers
 
