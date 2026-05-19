@@ -1467,8 +1467,16 @@ def save_as_document(content: str):
 with st.sidebar:
     st.caption(f"Signed in as {_user_email}")
     if st.button("Sign out", key="signout"):
-        st.session_state.pop("auth_email", None)
+        for _k in ("auth_email", "google_access_token", "google_refresh_token"):
+            st.session_state.pop(_k, None)
         st.rerun()
+    _drive_token = st.session_state.get("google_access_token", "")
+    if not DRIVE_AVAILABLE:
+        st.caption("Drive: unavailable (import error)")
+    elif _drive_token:
+        st.caption("Drive: connected")
+    else:
+        st.caption("Drive: not connected — sign out and back in")
     st.divider()
     if st.session_state.active_doc is not None:
         doc = st.session_state.documents[st.session_state.active_doc]
