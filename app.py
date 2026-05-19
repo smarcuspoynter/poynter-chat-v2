@@ -54,13 +54,17 @@ if _creds_env and not os.path.exists(_AUTH_CREDS_PATH):
     _AUTH_CREDS_PATH = _tmp.name
 
 def _load_google_oauth_creds():
+    client_id = os.environ.get("GOOGLE_CLIENT_ID", "")
+    client_secret = os.environ.get("GOOGLE_CLIENT_SECRET", "")
+    if client_id and client_secret:
+        return client_id, client_secret
     try:
         with open(_AUTH_CREDS_PATH) as f:
             data = json.load(f)
         web = data.get("web", data.get("installed", {}))
         return web.get("client_id", ""), web.get("client_secret", "")
     except Exception:
-        return os.environ.get("GOOGLE_CLIENT_ID", ""), os.environ.get("GOOGLE_CLIENT_SECRET", "")
+        return "", ""
 
 GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET = _load_google_oauth_creds()
 GOOGLE_AUTH_ENDPOINT = "https://accounts.google.com/o/oauth2/v2/auth"
