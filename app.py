@@ -1,6 +1,9 @@
 import os
 import re
 import json
+import secrets
+import urllib.parse
+import urllib.request
 from datetime import date
 import streamlit as st
 import anthropic
@@ -37,6 +40,49 @@ DRIVE_SCOPES = [
 TOKEN_PATH = os.path.join(os.path.dirname(__file__), "token.json")
 CREDENTIALS_PATH = os.path.join(os.path.dirname(__file__), "credentials.json")
 
+
+
+REDIRECT_URI = os.environ.get("REDIRECT_URI", "http://localhost:8501")
+GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID", "")
+GOOGLE_CLIENT_SECRET = os.environ.get("GOOGLE_CLIENT_SECRET", "")
+GOOGLE_AUTH_ENDPOINT = "https://accounts.google.com/o/oauth2/v2/auth"
+GOOGLE_TOKEN_ENDPOINT = "https://oauth2.googleapis.com/token"
+GOOGLE_USERINFO_ENDPOINT = "https://www.googleapis.com/oauth2/v2/userinfo"
+
+
+def build_google_auth_url(state: str) -> str:
+    params = {
+        "client_id": GOOGLE_CLIENT_ID,
+        "redirect_uri": REDIRECT_URI,
+        "response_type": "code",
+        "scope": "openid email profile",
+        "state": state,
+        "prompt": "select_account",
+    }
+    return GOOGLE_AUTH_ENDPOINT + "?" + urllib.parse.urlencode(params)
+
+
+def fetch_google_user_email(code: str) -> str:
+    body = urllib.parse.urlencode({
+        "code": code,
+        "client_id": GOOGLE_CLIENT_ID,
+        "client_secret": GOOGLE_CLIENT_SECRET,
+        "redirect_uri": REDIRECT_URI,
+        "grant_type": "authorization_code",
+    }).encode()
+    req = urllib.request.Request(GOOGLE_TOKEN_ENDPOINT, data=body, method="POST")
+    try:
+        with urllib.request.urlopen(req) as r:
+            token = json.loads(r.read())
+    except urllib.error.HTTPError as e:
+        raise RuntimeError(f"Token exchange failed ({e.code}): {e.read().decode()}")
+    req2 = urllib.request.Request(
+        GOOGLE_USERINFO_ENDPOINT,
+        headers={"Authorization": f"Bearer {token['access_token']}"},
+    )
+    with urllib.request.urlopen(req2) as r:
+        user_info = json.loads(r.read())
+    return user_info.get("email", "")
 
 
 DRIVE_MIME_MAP = {
@@ -1194,24 +1240,45 @@ st.markdown(
 )
 
 # --- Auth ---
-if not st.user.is_logged_in:
+if "code" in st.query_params and "oauth_code" not in st.session_state:
+    st.session_state["oauth_code"] = st.query_params["code"]
+    st.query_params.clear()
+    st.rerun()
+
+if "oauth_code" in st.session_state:
+    _code = st.session_state.pop("oauth_code")
+    try:
+        _email = fetch_google_user_email(_code)
+        st.session_state["auth_email"] = _email
+        st.rerun()
+    except Exception as _e:
+        st.error(f"Sign-in failed: {_e}")
+        st.stop()
+
+_auth_email = st.session_state.get("auth_email", "")
+
+if not _auth_email:
     st.markdown(
         '<div style="max-width:400px;margin:100px auto;text-align:center">'
         '<p style="font-family:Roboto,sans-serif;font-size:15px;color:#555;margin-bottom:28px">'
         'Sign in with your Poynter Google account to continue.</p>'
+        f'<a href="{build_google_auth_url(secrets.token_hex(16))}" target="_self" '
+        'style="display:inline-block;background:#235213;color:#fff;font-family:Roboto,sans-serif;'
+        'font-size:14px;font-weight:600;padding:12px 28px;border-radius:6px;text-decoration:none">'
+        'Sign in with Google</a>'
         '</div>',
         unsafe_allow_html=True,
     )
-    if st.button("Sign in with Google", key="login_btn"):
-        st.login("google")
     st.stop()
 
-_user_email = st.user.email
-if not _user_email.endswith("@poynter.org"):
+if not _auth_email.endswith("@poynter.org"):
     st.error("Access is restricted to Poynter staff. Please sign in with your @poynter.org account.")
     if st.button("Sign out"):
-        st.logout()
+        st.session_state.pop("auth_email", None)
+        st.rerun()
     st.stop()
+
+_user_email = _auth_email
 
 # --- Session state ---
 for key, default in [
@@ -1249,7 +1316,8 @@ def save_as_document(content: str):
 with st.sidebar:
     st.caption(f"Signed in as {_user_email}")
     if st.button("Sign out", key="signout"):
-        st.logout()
+        st.session_state.pop("auth_email", None)
+        st.rerun()
     st.divider()
     if st.session_state.active_doc is not None:
         doc = st.session_state.documents[st.session_state.active_doc]
