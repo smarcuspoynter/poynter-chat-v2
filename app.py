@@ -1537,6 +1537,14 @@ with st.sidebar:
         st.caption("Drive: unavailable (import error)")
     elif _drive_token:
         st.caption("Drive: connected")
+        if st.button("Test Drive API", key="drive_test"):
+            _test_resp = requests.get(
+                "https://www.googleapis.com/drive/v3/files",
+                headers={"Authorization": f"Bearer {_drive_token}"},
+                params={"pageSize": "1", "fields": "files(id,name)"},
+                timeout=10,
+            )
+            st.code(f"{_test_resp.status_code}\n{_test_resp.text[:500]}")
     else:
         st.caption("Drive: not connected — sign out and back in")
     st.divider()
