@@ -4,6 +4,7 @@ token.json
 credentials.json
 google_auth_credentials.json
 migrate_to_cloud.py
+streamlit_secrets.toml
 
 # App data
 documents.json
