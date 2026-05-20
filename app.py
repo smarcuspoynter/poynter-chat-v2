@@ -731,18 +731,18 @@ def _tool_search_drive_api(creds, query: str) -> str:
     return "\n".join(lines)
 
 
-def tool_search_drive(query: str) -> str:
-    access_token = st.session_state.get("google_access_token", "")
+def tool_search_drive(query: str, access_token: str = "", drive_types: list = None, date_from=None, date_to=None) -> str:
+    # All session_state values must be passed as args — this runs in a thread where session_state is unavailable
     if not access_token:
         return "Google Drive search is not connected: no access token in session. Sign out and sign back in to enable Drive search."
 
+    if drive_types is None:
+        drive_types = ["Docs", "Slides", "Sheets"]
+
     safe_query = query.replace("'", "\\'")
-    drive_types = st.session_state.get("drive_types_select", ["Docs", "Slides", "Sheets"])
     type_filter = build_drive_type_filter(drive_types)
 
     date_filter = ""
-    date_from = st.session_state.get("date_from")
-    date_to = st.session_state.get("date_to")
     if date_from:
         date_filter += f" and modifiedTime >= '{date_from.isoformat()}T00:00:00'"
     if date_to:
@@ -789,12 +789,18 @@ def tool_search_all(query: str) -> str:
     src_lms = st.session_state.get("src_lms", True)
     src_drive = st.session_state.get("src_drive", True)
 
+    # Capture session_state values on the main thread before passing to worker threads
+    access_token = st.session_state.get("google_access_token", "")
+    drive_types = st.session_state.get("drive_types_select", ["Docs", "Slides", "Sheets"])
+    date_from = st.session_state.get("date_from")
+    date_to = st.session_state.get("date_to")
+
     futures = {}
     with ThreadPoolExecutor() as executor:
         if src_lms:
             futures["lms"] = executor.submit(tool_search_content, query)
         if src_drive:
-            futures["drive"] = executor.submit(tool_search_drive, query)
+            futures["drive"] = executor.submit(tool_search_drive, query, access_token, drive_types, date_from, date_to)
 
     parts = []
     if "lms" in futures:
