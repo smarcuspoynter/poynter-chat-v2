@@ -422,10 +422,13 @@ def strip_html(html):
 # --- Tool implementations ---
 
 def tool_search_content(query: str) -> str:
+    lines = [f"Search results for '{query}':\n"]
+    seen_urls = set()
+
+    # Semantic search via Qdrant
     try:
         dense_model, qdrant = load_search_models()
         dense_vec = dense_model.encode(query).tolist()
-
         results = qdrant.query_points(
             collection_name=QDRANT_COLLECTION,
             query=dense_vec,
@@ -433,40 +436,57 @@ def tool_search_content(query: str) -> str:
             limit=20,
             with_payload=True,
         )
-
-        if not results.points:
-            return f"No results found for '{query}'."
-
         seen_docs = set()
-        hits = []
         for point in results.points:
             p = point.payload
             doc_id = p.get("doc_id", "")
             if doc_id in seen_docs:
                 continue
             seen_docs.add(doc_id)
-            hits.append(p)
-
-        lines = [f"Search results for '{query}':\n"]
-        for p in hits:
             title = p.get("title", "(no title)")
             content_type = p.get("content_type", "")
             parent_title = p.get("parent_title", "")
             url = p.get("url", "")
-            snippet = (p.get("description", "") or p.get("chunk_text", ""))[:100]
-
+            snippet = (p.get("description", "") or p.get("chunk_text", ""))[:120]
             line = f"- [{content_type.upper()}] {title}"
             if parent_title:
                 line += f" (in: {parent_title})"
             if url:
                 line += f" — URL: {url}"
+                seen_urls.add(url)
             if snippet:
                 line += f" | {snippet}"
             lines.append(line)
-
-        return "\n".join(lines)
     except Exception as e:
-        return f"Error searching content: {e}"
+        lines.append(f"(Semantic search error: {e})")
+
+    # Keyword search via LearnDash API — catches content not in Qdrant index
+    try:
+        kw_results = []
+        with ThreadPoolExecutor() as ex:
+            f_lessons = ex.submit(get_all_pages, "sfwd-lessons", {"search": query, "status": "publish", "per_page": 20})
+            f_topics = ex.submit(get_all_pages, "sfwd-topic", {"search": query, "status": "publish", "per_page": 20})
+            for item in f_lessons.result():
+                title = strip_html(item.get("title", {}).get("rendered", "(no title)"))
+                url = item.get("link", "")
+                if url not in seen_urls:
+                    kw_results.append(f"- [LESSON] {title} — URL: {url}")
+                    seen_urls.add(url)
+            for item in f_topics.result():
+                title = strip_html(item.get("title", {}).get("rendered", "(no title)"))
+                url = item.get("link", "")
+                if url not in seen_urls:
+                    kw_results.append(f"- [TOPIC] {title} — URL: {url}")
+                    seen_urls.add(url)
+        if kw_results:
+            lines.append("\n(Additional keyword matches from LMS:)")
+            lines.extend(kw_results)
+    except Exception:
+        pass
+
+    if len(lines) == 1:
+        return f"No results found for '{query}'."
+    return "\n".join(lines)
 
 
 def tool_search_courses(query: str) -> str:
@@ -712,15 +732,57 @@ def _tool_search_drive_api(creds, query: str) -> str:
 
 
 def tool_search_drive(query: str) -> str:
-    if not DRIVE_AVAILABLE:
-        return "Google Drive search is unavailable: Google API libraries failed to import on this server."
-    creds = get_drive_credentials()
-    if not creds:
+    access_token = st.session_state.get("google_access_token", "")
+    if not access_token:
         return "Google Drive search is not connected: no access token in session. Sign out and sign back in to enable Drive search."
+
+    safe_query = query.replace("'", "\\'")
+    drive_types = st.session_state.get("drive_types_select", ["Docs", "Slides", "Sheets"])
+    type_filter = build_drive_type_filter(drive_types)
+
+    date_filter = ""
+    date_from = st.session_state.get("date_from")
+    date_to = st.session_state.get("date_to")
+    if date_from:
+        date_filter += f" and modifiedTime >= '{date_from.isoformat()}T00:00:00'"
+    if date_to:
+        date_filter += f" and modifiedTime <= '{date_to.isoformat()}T23:59:59'"
+
+    drive_query = f"fullText contains '{safe_query}' and trashed=false{type_filter}{date_filter}"
+
     try:
-        return _tool_search_drive_api(creds, query)
+        resp = requests.get(
+            "https://www.googleapis.com/drive/v3/files",
+            headers={"Authorization": f"Bearer {access_token}"},
+            params={
+                "q": drive_query,
+                "spaces": "drive",
+                "fields": "files(id,name,mimeType,webViewLink,modifiedTime)",
+                "pageSize": 20,
+                "orderBy": "modifiedTime desc",
+                "includeItemsFromAllDrives": "true",
+                "supportsAllDrives": "true",
+                "corpora": "allDrives",
+            },
+            timeout=15,
+        )
+        if resp.status_code != 200:
+            return f"Drive API error {resp.status_code}: {resp.text[:300]}"
+        files = resp.json().get("files", [])
+        if not files:
+            return f"No Drive files found matching '{query}'."
+        lines = [f"Google Drive results for '{query}':\n"]
+        for item in files:
+            name = item.get("name", "(unnamed)")
+            link = item.get("webViewLink", "")
+            mime = DRIVE_MIME_LABELS.get(item.get("mimeType", ""), "File")
+            line = f"- [{mime}] {name}"
+            if link:
+                line += f" — {link}"
+            lines.append(line)
+        return "\n".join(lines)
     except Exception as e:
-        return f"Error searching Drive: {e}"
+        return f"Drive search error: {e}"
 
 
 def tool_search_all(query: str) -> str:
