@@ -785,15 +785,14 @@ def tool_search_drive(query: str, access_token: str = "", drive_types: list = No
         return f"Drive search error: {e}"
 
 
-def tool_search_all(query: str) -> str:
-    src_lms = st.session_state.get("src_lms", True)
-    src_drive = st.session_state.get("src_drive", True)
-
-    # Capture session_state values on the main thread before passing to worker threads
-    access_token = st.session_state.get("google_access_token", "")
-    drive_types = st.session_state.get("drive_types_select", ["Docs", "Slides", "Sheets"])
-    date_from = st.session_state.get("date_from")
-    date_to = st.session_state.get("date_to")
+def tool_search_all(query: str, context: dict = None) -> str:
+    ctx = context or {}
+    src_lms = ctx.get("src_lms", st.session_state.get("src_lms", True))
+    src_drive = ctx.get("src_drive", st.session_state.get("src_drive", True))
+    access_token = ctx.get("access_token", "")
+    drive_types = ctx.get("drive_types", ["Docs", "Slides", "Sheets"])
+    date_from = ctx.get("date_from")
+    date_to = ctx.get("date_to")
 
     futures = {}
     with ThreadPoolExecutor() as executor:
@@ -811,7 +810,8 @@ def tool_search_all(query: str) -> str:
     return "\n\n".join(parts) if parts else "No search sources are enabled."
 
 
-def execute_tool(name: str, inputs: dict) -> str:
+def execute_tool(name: str, inputs: dict, context: dict = None) -> str:
+    ctx = context or {}
     if name == "search_content":
         return tool_search_content(inputs["query"])
     elif name == "search_courses":
@@ -829,7 +829,7 @@ def execute_tool(name: str, inputs: dict) -> str:
     elif name == "get_topic":
         return tool_get_topic(inputs["topic_id"])
     elif name == "search_all":
-        return tool_search_all(inputs["query"])
+        return tool_search_all(inputs["query"], ctx)
     return f"Unknown tool: {name}"
 
 
@@ -1006,9 +1006,17 @@ def run_claude_streaming(messages: list, placeholder, active_tools: list, system
             status = " · ".join(f"*{l}*" for l in labels)
             placeholder.markdown((full_text + f"\n\n{status}") if full_text else status)
 
+            tool_context = {
+                "src_lms": st.session_state.get("src_lms", True),
+                "src_drive": st.session_state.get("src_drive", True),
+                "access_token": st.session_state.get("google_access_token", ""),
+                "drive_types": st.session_state.get("drive_types_select", ["Docs", "Slides", "Sheets"]),
+                "date_from": st.session_state.get("date_from"),
+                "date_to": st.session_state.get("date_to"),
+            }
             tool_results_map = {}
             with ThreadPoolExecutor() as executor:
-                futures = {executor.submit(execute_tool, b.name, b.input): b.id for b in tool_blocks}
+                futures = {executor.submit(execute_tool, b.name, b.input, tool_context): b.id for b in tool_blocks}
                 for future in as_completed(futures):
                     tool_results_map[futures[future]] = future.result()
 
