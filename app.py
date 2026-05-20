@@ -72,7 +72,7 @@ def build_google_auth_url() -> str:
         "client_id": GOOGLE_CLIENT_ID,
         "redirect_uri": REDIRECT_URI,
         "response_type": "code",
-        "scope": "openid email profile https://www.googleapis.com/auth/drive.readonly",
+        "scope": "openid email profile",
         "state": state,
         "code_challenge": challenge,
         "code_challenge_method": "S256",
