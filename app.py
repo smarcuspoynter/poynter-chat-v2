@@ -1436,7 +1436,9 @@ hr { border-color: #e4e4e4; }
     border: none !important;
     box-shadow: none !important;
 }
-[data-testid="stSidebarCollapseButton"] [data-testid="stIconMaterial"],
+[data-testid="stSidebarCollapseButton"] [data-testid="stIconMaterial"] {
+    color: #666666 !important;
+}
 [data-testid="stSidebarCollapsedControl"] [data-testid="stIconMaterial"],
 [data-testid="stHeader"] [data-testid="stIconMaterial"] {
     color: #ffffff !important;
