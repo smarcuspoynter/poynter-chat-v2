@@ -775,14 +775,60 @@ def tool_search_drive(query: str, access_token: str = "", drive_types: list = No
         for item in files:
             name = item.get("name", "(unnamed)")
             link = item.get("webViewLink", "")
+            file_id = item.get("id", "")
             mime = DRIVE_MIME_LABELS.get(item.get("mimeType", ""), "File")
-            line = f"- [{mime}] {name}"
+            line = f"- [{mime}] {name} (file_id: {file_id})"
             if link:
                 line += f" — {link}"
             lines.append(line)
+        lines.append("\nUse the read_drive_file tool with a file_id to read the actual content of any file above.")
         return "\n".join(lines)
     except Exception as e:
         return f"Drive search error: {e}"
+
+
+DRIVE_EXPORT_MIME = {
+    "application/vnd.google-apps.document": "text/plain",
+    "application/vnd.google-apps.presentation": "text/plain",
+    "application/vnd.google-apps.spreadsheet": "text/csv",
+}
+
+
+def tool_read_drive_file(file_id: str, access_token: str = "") -> str:
+    if not access_token:
+        return "Drive not connected: no access token. Sign out and back in."
+    try:
+        meta = requests.get(
+            f"https://www.googleapis.com/drive/v3/files/{file_id}",
+            headers={"Authorization": f"Bearer {access_token}"},
+            params={"fields": "name,mimeType"},
+            timeout=10,
+        )
+        if meta.status_code != 200:
+            return f"Could not fetch file metadata: {meta.status_code}"
+        file_name = meta.json().get("name", "")
+        file_mime = meta.json().get("mimeType", "")
+        export_mime = DRIVE_EXPORT_MIME.get(file_mime)
+        if export_mime:
+            resp = requests.get(
+                f"https://www.googleapis.com/drive/v3/files/{file_id}/export",
+                headers={"Authorization": f"Bearer {access_token}"},
+                params={"mimeType": export_mime},
+                timeout=30,
+            )
+        else:
+            return f"Cannot read content of file type '{file_mime}' — only Google Docs, Slides, and Sheets are supported."
+        if resp.status_code != 200:
+            return f"Could not read file content: {resp.status_code}"
+        content = resp.text.strip()
+        max_chars = 12000
+        truncated = len(content) > max_chars
+        result = f"Content of '{file_name}':\n\n{content[:max_chars]}"
+        if truncated:
+            result += f"\n\n[Truncated — showing first {max_chars} characters]"
+        return result
+    except Exception as e:
+        return f"Drive file read error: {e}"
 
 
 def tool_search_all(query: str, context: dict = None) -> str:
@@ -830,10 +876,24 @@ def execute_tool(name: str, inputs: dict, context: dict = None) -> str:
         return tool_get_topic(inputs["topic_id"])
     elif name == "search_all":
         return tool_search_all(inputs["query"], ctx)
+    elif name == "read_drive_file":
+        return tool_read_drive_file(inputs["file_id"], ctx.get("access_token", ""))
     return f"Unknown tool: {name}"
 
 
 # --- Tool definitions ---
+
+READ_DRIVE_FILE_TOOL = {
+    "name": "read_drive_file",
+    "description": "Read the full text content of a Google Drive file by its ID. Use this after search_all returns Drive results to read the actual content of relevant Docs, Slides, or Sheets. Always read file content before quoting, summarizing, or analyzing Drive files.",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "file_id": {"type": "string", "description": "The Google Drive file ID from search results"},
+        },
+        "required": ["file_id"],
+    },
+}
 
 SEARCH_ALL_TOOL = {
     "name": "search_all",
@@ -917,6 +977,8 @@ def get_active_tools():
     tools = []
     if src_lms or src_drive:
         tools.append(SEARCH_ALL_TOOL)
+    if src_drive:
+        tools.append(READ_DRIVE_FILE_TOOL)
     if src_lms:
         tools.extend(LMS_NAV_TOOLS)
     return tools
