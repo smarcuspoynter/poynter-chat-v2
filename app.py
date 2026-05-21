@@ -327,14 +327,14 @@ Help the team:
 Respond in whatever format best fits the question. A broad question gets an overview.
 A specific content question gets a detailed breakdown. A review request gets structured feedback with specific quotes and suggestions.
 
-When finding content on a topic: call search_all — it automatically searches every enabled
-source (LMS and Drive) in parallel and returns results in labeled sections.
+When finding content on a topic: ALWAYS call search_all first — it searches every enabled
+source (LMS and Drive) in parallel. Never skip Drive when it is enabled.
 
 For comprehensive questions (e.g. "show me everything on X", "evaluate consistency across content"):
 - Call search_all multiple times with different phrasings of the topic to maximize coverage
-- After identifying relevant lessons or topics from search results, call get_lesson or get_topic
-  to read the full text before drawing conclusions about quality or consistency
-- Do not summarize based only on titles and snippets for evaluation tasks
+- After identifying relevant LMS lessons or topics, call get_lesson or get_topic to read full text
+- After identifying relevant Drive files, call read_drive_file on each to read actual content
+- Do not summarize or draw conclusions based only on titles — always read the content first
 
 For LMS navigation: use search_courses when looking for a specific course by name.
 Drill into results with get_course_structure, list_lessons, or list_topics as needed.
@@ -1014,6 +1014,8 @@ def build_filter_system_addendum():
         lines.append("Do NOT use any LMS navigation tools.")
     if not src_drive:
         lines.append("Do NOT search Google Drive.")
+    if src_drive:
+        lines.append("Google Drive is enabled — every search_all call MUST include Drive results. After getting Drive results, use read_drive_file to read the content of relevant files before responding.")
 
     return "\n\n" + " ".join(lines)
 
