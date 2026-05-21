@@ -1610,6 +1610,7 @@ with st.sidebar:
         for _k in ("auth_email", "google_access_token", "google_refresh_token"):
             st.session_state.pop(_k, None)
         st.rerun()
+    st.link_button("User Guide", "https://docs.google.com/document/d/1ouzcbEWX-vZL66VA_5zPUTPdgDnTUKS1_eKo3Jf4wr0/edit?usp=sharing", use_container_width=True)
     _drive_token = st.session_state.get("google_access_token", "")
     if not DRIVE_AVAILABLE:
         st.caption("Drive: unavailable (import error)")
