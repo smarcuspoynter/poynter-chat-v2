@@ -1484,7 +1484,7 @@ if not _auth_email:
         '<div style="max-width:400px;margin:100px auto;text-align:center">'
         '<p style="font-family:Roboto,sans-serif;font-size:15px;color:#555;margin-bottom:28px">'
         'Sign in with your Poynter Google account to continue.</p>'
-        f'<a href="{build_google_auth_url()}" target="_self" '
+        f'<a href="{build_google_auth_url()}" target="_blank" '
         'style="display:inline-block;background:#235213;color:#fff;font-family:Roboto,sans-serif;'
         'font-size:14px;font-weight:600;padding:12px 28px;border-radius:6px;text-decoration:none">'
         'Sign in with Google</a>'
