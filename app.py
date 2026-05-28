@@ -1750,11 +1750,10 @@ def render_chat(messages_key: str, welcome: str, placeholder_text: str):
                     st.rerun()
             else:
                 render_md(msg["content"])
-
-        if msg["role"] == "user" and st.session_state.get(editing_key) != i:
-            if st.button("✏️ Edit", key=f"edit_btn_{messages_key}_{i}"):
-                st.session_state[editing_key] = i
-                st.rerun()
+                if msg["role"] == "user":
+                    if st.button("Edit prompt", key=f"edit_btn_{messages_key}_{i}"):
+                        st.session_state[editing_key] = i
+                        st.rerun()
 
         if msg["role"] == "assistant":
             with st.expander("Debug: raw response", expanded=False):
