@@ -316,13 +316,17 @@ Flag Outdated if content references tools, platforms, or statistics that appear 
     return result
 
 
-SYSTEM_PROMPT = """You are a helpful assistant for Poynter's teaching team.
-You have access to Poynter's full LearnDash course catalog AND the team's Google Drive.
+SYSTEM_PROMPT = """You are a focused assistant for Poynter's teaching team — strictly scoped to Poynter's content library and course development work.
 
-Help the team:
-- Find content on any topic for reuse or reference
-- Understand what exists in the catalog and team documents
-- Review specific lessons or topics for staleness, relevance, or quality
+You are ONLY here to help with:
+- Finding and analyzing content in Poynter's LMS course catalog
+- Searching and reading files in the team's Google Drive
+- Course development, content planning, and course auditing
+- Questions directly related to Poynter's teaching programs and curriculum
+
+If asked about anything outside this scope (general knowledge, current events, coding help, creative writing, personal advice, or any topic unrelated to Poynter's courses and content), politely decline. Explain that you're focused on Poynter's content library, and suggest they use a general-purpose AI assistant for other needs.
+
+You have access to Poynter's full LearnDash course catalog AND the team's Google Drive.
 
 Respond in whatever format best fits the question. A broad question gets an overview.
 A specific content question gets a detailed breakdown. A review request gets structured feedback with specific quotes and suggestions.
@@ -1443,13 +1447,6 @@ hr { border-color: #e4e4e4; }
 [data-testid="stHeader"] [data-testid="stIconMaterial"] {
     color: #ffffff !important;
 }
-[data-testid="stVerticalBlock"]:has(.filter-bar-marker) {
-    background-color: #f7f7f7 !important;
-    border: 1px solid #e4e4e4 !important;
-    border-radius: 6px !important;
-    padding: 14px 18px 10px !important;
-    margin-bottom: 14px !important;
-}
 .filter-heading {
     font-family: 'Roboto', sans-serif !important;
     font-size: 10px !important;
@@ -1621,6 +1618,26 @@ with st.sidebar:
     else:
         st.caption("Drive: not connected — sign out and back in")
     st.divider()
+    st.markdown('<p class="filter-heading">Search Sources</p>', unsafe_allow_html=True)
+    st.checkbox("Poynter LMS", key="src_lms")
+    st.checkbox("Google Drive", key="src_drive")
+    st.markdown('<p class="filter-heading" style="margin-top:10px">Drive File Types</p>', unsafe_allow_html=True)
+    st.multiselect(
+        "drive_types_label",
+        options=["Docs", "Slides", "Sheets", "Forms", "Images"],
+        key="drive_types_select",
+        disabled=not st.session_state.src_drive,
+        label_visibility="collapsed",
+    )
+    st.markdown('<p class="filter-heading" style="margin-top:10px">Date Range</p>', unsafe_allow_html=True)
+    _dcol1, _dcol2 = st.columns(2)
+    with _dcol1:
+        st.markdown('<p class="date-sublabel">From</p>', unsafe_allow_html=True)
+        st.date_input("From", value=None, key="date_from", label_visibility="collapsed")
+    with _dcol2:
+        st.markdown('<p class="date-sublabel">To</p>', unsafe_allow_html=True)
+        st.date_input("To", value=None, key="date_to", label_visibility="collapsed")
+    st.divider()
     if st.session_state.active_doc is not None:
         doc = st.session_state.documents[st.session_state.active_doc]
         c1, c2 = st.columns([3, 1])
@@ -1685,36 +1702,6 @@ with st.sidebar:
                         st.rerun()
 
 
-# --- Filter bar ---
-with st.container():
-    st.markdown('<span class="filter-bar-marker"></span>', unsafe_allow_html=True)
-    fc1, fc3, fc4 = st.columns([1.4, 2.8, 2.2])
-
-    with fc1:
-        st.markdown('<p class="filter-heading">Search</p>', unsafe_allow_html=True)
-        st.checkbox("Poynter LMS", key="src_lms")
-        st.checkbox("Google Drive", key="src_drive")
-
-    with fc3:
-        st.markdown('<p class="filter-heading">Drive File Types</p>', unsafe_allow_html=True)
-        st.multiselect(
-            "drive_types_label",
-            options=["Docs", "Slides", "Sheets", "Forms", "Images"],
-            key="drive_types_select",
-            disabled=not st.session_state.src_drive,
-            label_visibility="collapsed",
-        )
-
-    with fc4:
-        st.markdown('<p class="filter-heading">Date Range</p>', unsafe_allow_html=True)
-        dcol1, dcol2 = st.columns(2)
-        with dcol1:
-            st.markdown('<p class="date-sublabel">From</p>', unsafe_allow_html=True)
-            st.date_input("From", value=None, key="date_from", label_visibility="collapsed")
-        with dcol2:
-            st.markdown('<p class="date-sublabel">To</p>', unsafe_allow_html=True)
-            st.date_input("To", value=None, key="date_to", label_visibility="collapsed")
-
 
 # --- Shared chat renderer ---
 
@@ -1736,19 +1723,54 @@ def render_chat(messages_key: str, welcome: str, placeholder_text: str):
     messages = st.session_state[messages_key]
     active_tools = get_active_tools()
     system_addendum = build_filter_system_addendum()
+    editing_key = f"editing_msg_{messages_key}"
+    pending_key = f"pending_response_{messages_key}"
 
     if not messages:
         st.markdown(f'<div class="welcome-text">{welcome}</div>', unsafe_allow_html=True)
 
     for i, msg in enumerate(messages):
         with st.chat_message(msg["role"]):
-            render_md(msg["content"])
+            if msg["role"] == "user" and st.session_state.get(editing_key) == i:
+                edited_text = st.text_area(
+                    "Edit message",
+                    value=msg["content"],
+                    key=f"edit_area_{messages_key}_{i}",
+                    label_visibility="collapsed",
+                )
+                ec1, ec2 = st.columns([1, 1])
+                if ec1.button("Send", key=f"edit_save_{messages_key}_{i}", type="primary"):
+                    messages[i]["content"] = edited_text
+                    st.session_state[messages_key] = messages[:i + 1]
+                    st.session_state[editing_key] = None
+                    st.session_state[pending_key] = True
+                    st.rerun()
+                if ec2.button("Cancel", key=f"edit_cancel_{messages_key}_{i}"):
+                    st.session_state[editing_key] = None
+                    st.rerun()
+            else:
+                render_md(msg["content"])
+
+        if msg["role"] == "user" and st.session_state.get(editing_key) != i:
+            if st.button("✏️ Edit", key=f"edit_btn_{messages_key}_{i}"):
+                st.session_state[editing_key] = i
+                st.rerun()
+
         if msg["role"] == "assistant":
             with st.expander("Debug: raw response", expanded=False):
                 st.code(msg["content"], language=None)
             if st.button("Save as Doc", key=f"{messages_key}_save_{i}"):
                 save_as_document(msg["content"])
                 st.rerun()
+
+    if st.session_state.get(pending_key) and messages and messages[-1]["role"] == "user":
+        st.session_state[pending_key] = False
+        with st.chat_message("assistant"):
+            reply_placeholder = st.empty()
+            reply = run_claude_streaming(messages, reply_placeholder, active_tools, system_addendum)
+            render_md(reply, reply_placeholder)
+        messages.append({"role": "assistant", "content": reply})
+        st.rerun()
 
     if prompt := st.chat_input(placeholder_text):
         messages.append({"role": "user", "content": prompt})
